@@ -27,14 +27,21 @@ jobs:
       - name: Unzip Project
         run: unzip integrated_project_final.zip
 
+      - name: Locate Project Directory
+        id: locate
+        run: |
+          # 自动查找 pubspec.yaml 所在目录
+          DIR=$(find . -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
+          echo "PROJECT_DIR=$DIR" >> $GITHUB_OUTPUT
+
       - name: Get dependencies
-        run: cd integrated_project_final && flutter pub get
+        run: cd ${{ steps.locate.outputs.PROJECT_DIR }} && flutter pub get
 
       - name: Build Debug APK
-        run: cd integrated_project_final && flutter build apk --debug
+        run: cd ${{ steps.locate.outputs.PROJECT_DIR }} && flutter build apk --debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: motong-flutter-debug-apk
-          path: integrated_project_final/build/app/outputs/flutter-apk/app-debug.apk
+          path: ${{ steps.locate.outputs.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-debug.apk
