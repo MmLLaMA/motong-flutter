@@ -8,12 +8,13 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: setup-java@v4
         with:
           distribution: zulu
           java-version: '17'
@@ -27,21 +28,80 @@ jobs:
       - name: Unzip Project
         run: unzip integrated_project_final.zip
 
-      - name: Locate Project Directory
-        id: locate
+      - name: Locate Source Project
+        id: locate_src
         run: |
-          # 自动查找 pubspec.yaml 所在目录
-          DIR=$(find . -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
-          echo "PROJECT_DIR=$DIR" >> $GITHUB_OUTPUT
+          # 查找解压后的源码目录（含 pubspec.yaml）
+          SRC_DIR=$(find . -name "pubspec.yaml" -not -path "*/build/*" | head -n 1 | xargs dirname)
+          echo "SRC_DIR=$SRC_DIR" >> $GITHUB_OUTPUT
+          echo "Source project at: $SRC_DIR"
+
+      - name: Generate Build System with flutter create
+        run: |
+          # 用 flutter create 生成完整的 Android Gradle 构建系统（项目 zip 缺少这些）
+          BUILD_DIR="motong_build"
+          rm -rf "$BUILD_DIR"
+          flutter create --org com.motong --project-name motong "$BUILD_DIR"
+
+      - name: Merge lib/ and Android customizations
+        run: |
+          BUILD_DIR="motong_build"
+          SRC_DIR="${{ steps.locate_src.outputs.SRC_DIR }}"
+
+          # 合并六模块的 Dart 源码
+          rm -rf "$BUILD_DIR/lib"
+          cp -r "$SRC_DIR/lib" "$BUILD_DIR/"
+
+          # 合并 AndroidManifest.xml（保留权限/服务/接收器声明）
+          mkdir -p "$BUILD_DIR/android/app/src/main"
+          cp "$SRC_DIR/android/app/src/main/AndroidManifest.xml" \
+             "$BUILD_DIR/android/app/src/main/"
+
+          # 合并 Kotlin 手机控制模块
+          if [ -d "$SRC_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol" ]; then
+            mkdir -p "$BUILD_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol"
+            cp -r "$SRC_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol/"* \
+               "$BUILD_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol/"
+          fi
+
+          # 合并 XML 资源（无障碍服务 + 设备管理器）
+          mkdir -p "$BUILD_DIR/android/app/src/main/res/xml"
+          cp "$SRC_DIR/android/app/src/main/res/xml/"*.xml \
+             "$BUILD_DIR/android/app/src/main/res/xml/" 2>/dev/null || true
+
+          # 合并 strings.xml
+          mkdir -p "$BUILD_DIR/android/app/src/main/res/values"
+          cp "$SRC_DIR/android/app/src/main/res/values/strings.xml" \
+             "$BUILD_DIR/android/app/src/main/res/values/" 2>/dev/null || true
+
+          # 合并 pubspec.yaml 依赖声明
+          cp "$SRC_DIR/pubspec.yaml" "$BUILD_DIR/pubspec.yaml"
+
+          # 修正 namespace / applicationId 为 com.motong
+          APP_BUILD="$BUILD_DIR/android/app/build.gradle.kts"
+          if [ -f "$APP_BUILD" ]; then
+            sed -i 's/namespace = "com\.example\.motong"/namespace = "com.motong"/' "$APP_BUILD"
+            sed -i 's/applicationId = "com\.example\.motong"/applicationId = "com.motong"/' "$APP_BUILD"
+          fi
+
+          echo "Merged into $BUILD_DIR"
+
+      - name: Fix Dependencies
+        working-directory: motong_build
+        run: |
+          # Flutter 3.35 要求 intl >= 0.20.0
+          sed -i 's/intl: ^0\.19\.0/intl: ^0.20.2/' pubspec.yaml
 
       - name: Get dependencies
-        run: cd ${{ steps.locate.outputs.PROJECT_DIR }} && flutter pub get
+        working-directory: motong_build
+        run: flutter pub get
 
       - name: Build Debug APK
-        run: cd ${{ steps.locate.outputs.PROJECT_DIR }} && flutter build apk --debug
+        working-directory: motong_build
+        run: flutter build apk --debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: motong-flutter-debug-apk
-          path: ${{ steps.locate.outputs.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-debug.apk
+          path: motong_build/build/app/outputs/flutter-apk/app-debug.apk
