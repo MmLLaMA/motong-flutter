@@ -155,4 +155,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: motong-flutter-debug-apk
-        path: motong_build/build/app/outputs/flutter-apk/app-debug.apk
+          path: motong_build/build/app/outputs/flutter-apk/app-debug.apk
