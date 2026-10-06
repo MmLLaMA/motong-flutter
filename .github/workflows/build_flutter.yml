@@ -52,7 +52,6 @@ jobs:
           cp -r "$SRC_DIR/lib" "$BUILD_DIR/"
 
           # 替换 AndroidManifest.xml，并修正 package 属性对齐 com.motong.app
-          # 这样 .MainActivity 能匹配 flutter create 生成的 com.motong.app.MainActivity
           mkdir -p "$BUILD_DIR/android/app/src/main"
           cp "$SRC_DIR/android/app/src/main/AndroidManifest.xml" \
              "$BUILD_DIR/android/app/src/main/"
@@ -112,6 +111,38 @@ jobs:
         run: |
           sed -i 's/intl: ^0\.19\.0/intl: ^0.20.2/' pubspec.yaml
 
+      - name: Patch Dart Sources
+        working-directory: motong_build
+        run: |
+          set -e
+          LIB="$PWD/lib"
+
+          echo "Patch 1: 函数类型别名 class X = Function() → typedef X = Function()"
+          # 原代码把 typedef 写成了 class，例如：
+          #   class LlmChatFn = Future<String> Function({...});
+          # Dart 解析器把 "class LlmChatFn = ..." 解释成 mixin 声明，
+          # 所以报 "Expected 'with' before this."。
+          # 正确写法：typedef LlmChatFn = Future<String> Function({...});
+          find "$LIB" -name '*.dart' -print0 | xargs -0 sed -i -E \
+            -e 's/^class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]+(Future|List|Map|String|int|void)/typedef \1 = \2/'
+
+          echo "Patch 2: 修复错误的相对导入 '../../core/' → '../../../core/'"
+          # lib/features/<module>/pages/*.dart 里 'import '../../core/...' 实际解析到
+          # lib/features/core/...，但实际文件在 lib/core/，所以应该再向上一层。
+          # 仅当文件实际位于 pages/ 或更深时才需要替换。
+          find "$LIB/features" -name '*.dart' -path '*/pages/*.dart' -print0 | xargs -0 sed -i \
+            "s|'\\.\\./\\.\\./core/|'../../../core/|g"
+
+          echo "Patch 3: Material 图标 folder_outline → folder_outlined（Flutter 3.27+ 弃用）"
+          find "$LIB" -name '*.dart' -print0 | xargs -0 sed -i \
+            -e 's/Icons\.folder_outline\b/Icons.folder_outlined/g'
+
+          echo "Patch 4: lucide_icons paintBrush → brush（包内正确名称）"
+          find "$LIB" -name '*.dart' -print0 | xargs -0 sed -i \
+            -e 's/LucideIcons\.paintBrush/LucideIcons.brush/g'
+
+          echo "All patches applied."
+
       - name: Get dependencies
         working-directory: motong_build
         run: flutter pub get
@@ -124,4 +155,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: motong-flutter-debug-apk
-          path: motong_build/build/app/outputs/flutter-apk/app-debug.apk
+        path: motong_build/build/app/outputs/flutter-apk/app-debug.apk
