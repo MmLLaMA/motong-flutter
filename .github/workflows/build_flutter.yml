@@ -117,6 +117,10 @@ jobs:
         working-directory: motong_build
         run: |
           sed -i 's/intl: ^0\.19\.0/intl: ^0.20.2/' pubspec.yaml
+          # 升级 workmanager：0.5.2 仍依赖 Flutter v1 embedding（ShimPluginRegistry/PluginRegistrantCallback），
+          # v2 embedding 已删除这些 API，编译报 Unresolved reference。0.6.0 改用 v2 embedding，
+          # 但 Dart API 与 0.5.x 兼容，无需改 Dart 源码。
+          sed -i 's/workmanager: 0\.5\.2/workmanager: ^0.6.0/' pubspec.yaml
 
       - name: Drift Code Generation
         working-directory: motong_build
