@@ -9,6 +9,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,7 +39,6 @@ jobs:
 
       - name: Generate Build System with flutter create
         run: |
-          # flutter create 会生成 v2 embedding 的 MainActivity（com.motong.app.MainActivity）
           BUILD_DIR="motong_build"
           rm -rf "$BUILD_DIR"
           flutter create --org com.motong --project-name motong "$BUILD_DIR"
@@ -47,55 +48,42 @@ jobs:
           BUILD_DIR="motong_build"
           SRC_DIR="${{ steps.locate_src.outputs.SRC_DIR }}"
 
-          # 合并六模块的 Dart 源码
           rm -rf "$BUILD_DIR/lib"
           cp -r "$SRC_DIR/lib" "$BUILD_DIR/"
-
-          # 合并 assets 目录（含 .gitkeep 占位，避免 pubspec 中声明的 assets/ 目录找不到）
           cp -r "$SRC_DIR/assets" "$BUILD_DIR/"
 
-          # 替换 AndroidManifest.xml，并修正 namespace 对齐 com.motong.app
           mkdir -p "$BUILD_DIR/android/app/src/main"
           cp "$SRC_DIR/android/app/src/main/AndroidManifest.xml" \
              "$BUILD_DIR/android/app/src/main/"
-          # 移除 package 属性（Android Gradle Plugin 8+ 不再支持，需在 build.gradle.kts 用 namespace）
           sed -i 's/ package="com\.motong"//g' \
              "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
           sed -i 's/android:name="\.\(MoTongAccessibilityService\|MoTongDeviceAdminReceiver\)"/android:name="com.motong.app.phonecontrol.\1"/g' \
              "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
-          # 关键：添加 flutterEmbedding v2 meta-data（Flutter 3.29+ 必需，缺失则判定为 v1）
           if ! grep -q 'flutterEmbedding' "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"; then
             sed -i 's|</application>|    <meta-data android:name="flutterEmbedding" android:value="2" />\n</application>|' \
                "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
           fi
 
-          # 合并 Kotlin 手机控制模块（plugin 必须正确注册，见下方 MainActivity 修改）
           mkdir -p "$BUILD_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol"
           cp -r "$SRC_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol/." \
              "$BUILD_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol/"
 
-          # 合并 XML 资源（无障碍服务 + 设备管理器）
           mkdir -p "$BUILD_DIR/android/app/src/main/res/xml"
           cp "$SRC_DIR/android/app/src/main/res/xml/"*.xml \
              "$BUILD_DIR/android/app/src/main/res/xml/" 2>/dev/null || true
-          # 修正：xml 引用了 accessibility_service_description，strings.xml 中实际命名为 a11y_service_description
           sed -i 's/@string\/accessibility_service_description/@string\/a11y_service_description/g' \
              "$BUILD_DIR/android/app/src/main/res/xml/accessibility_service_config.xml"
 
-          # 合并 strings.xml
           mkdir -p "$BUILD_DIR/android/app/src/main/res/values"
           cp "$SRC_DIR/android/app/src/main/res/values/strings.xml" \
              "$BUILD_DIR/android/app/src/main/res/values/" 2>/dev/null || true
 
-          # 合并 pubspec.yaml 依赖声明
           cp "$SRC_DIR/pubspec.yaml" "$BUILD_DIR/pubspec.yaml"
 
-          # 修正 namespace / applicationId 为 com.motong.app
           APP_BUILD="$BUILD_DIR/android/app/build.gradle.kts"
           sed -i 's/namespace = "com\.example\.motong"/namespace = "com.motong.app"/' "$APP_BUILD"
           sed -i 's/applicationId = "com\.example\.motong"/applicationId = "com.motong.app"/' "$APP_BUILD"
 
-          # 改写自动生成的 MainActivity，注册自定义 PhoneControlPlugin（v2 embedding）
           cat > "$BUILD_DIR/android/app/src/main/kotlin/com/motong/app/MainActivity.kt" <<'EOF'
           package com.motong.app
 
@@ -117,20 +105,12 @@ jobs:
         working-directory: motong_build
         run: |
           sed -i 's/intl: ^0\.19\.0/intl: ^0.20.2/' pubspec.yaml
-          # 升级 workmanager：0.5.2 仍依赖 Flutter v1 embedding（ShimPluginRegistry/PluginRegistrantCallback），
-          # v2 embedding 已删除这些 API，编译报 Unresolved reference。0.6.0 改用 v2 embedding，
-          # 但 Dart API 与 0.5.x 兼容，无需改 Dart 源码。
           sed -i 's/workmanager: 0\.5\.2/workmanager: ^0.6.0/' pubspec.yaml
 
       - name: Drift Code Generation
         working-directory: motong_build
         run: |
-          # Drift 数据库类（@DriftDatabase / @DriftAccessor）需要 build_runner 跑代码生成，
-          # 否则 types/methods（AppDatabase、AppSettingsDatabase、MemoryDao、customStatement 等）
-          # 都不可用，编译报 50+ 类型错误。
-          echo "Running build_runner for drift codegen..."
-          dart run build_runner build --delete-conflicting-outputs || \
-            echo "build_runner failed (continuing to surface remaining errors)"
+          dart run build_runner build --delete-conflicting-outputs || true
 
       - name: Get dependencies
         working-directory: motong_build
@@ -140,8 +120,25 @@ jobs:
         working-directory: motong_build
         run: flutter build apk --debug
 
-      - name: Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: motong-flutter-debug-apk
           path: motong_build/build/app/outputs/flutter-apk/app-debug.apk
+
+      - name: Publish to Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK="motong_build/build/app/outputs/flutter-apk/app-debug.apk"
+          # Delete existing tag/release if any
+          gh release delete apk-build --yes 2>/dev/null || true
+          git push origin :apk-build 2>/dev/null || true
+          # Create tag and release
+          git tag -f apk-build
+          git push origin apk-build --force
+          gh release create apk-build \
+            --title "墨瞳 APK (Debug)" \
+            --notes "自动构建 | $(date -u +%Y-%m-%d) | SHA: ${GITHUB_SHA::8}" \
+            --prerelease \
+            "$APK"
