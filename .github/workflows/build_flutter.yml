@@ -60,6 +60,11 @@ jobs:
              "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
           sed -i 's/android:name="\.\(MoTongAccessibilityService\|MoTongDeviceAdminReceiver\)"/android:name="com.motong.app.phonecontrol.\1"/g' \
              "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
+          # 关键：添加 flutterEmbedding v2 meta-data（Flutter 3.29+ 必需，缺失则判定为 v1）
+          if ! grep -q 'flutterEmbedding' "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"; then
+            sed -i 's|</application>|    <meta-data android:name="flutterEmbedding" android:value="2" />\n</application>|' \
+               "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
+          fi
 
           # 合并 Kotlin 手机控制模块（plugin 必须正确注册，见下方 MainActivity 修改）
           mkdir -p "$BUILD_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol"
