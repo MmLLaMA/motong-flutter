@@ -59,7 +59,7 @@ jobs:
           cp "$SRC_DIR/android/app/src/main/AndroidManifest.xml" \
              "$BUILD_DIR/android/app/src/main/"
           # 移除 package 属性（Android Gradle Plugin 8+ 不再支持，需在 build.gradle.kts 用 namespace）
-          sed -i 's/ package="com\.motong\.app"//g' \
+          sed -i 's/ package="com\.motong"//g' \
              "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
           sed -i 's/android:name="\.\(MoTongAccessibilityService\|MoTongDeviceAdminReceiver\)"/android:name="com.motong.app.phonecontrol.\1"/g' \
              "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
