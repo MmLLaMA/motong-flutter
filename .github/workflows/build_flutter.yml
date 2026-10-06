@@ -141,7 +141,24 @@ jobs:
           find "$LIB" -name '*.dart' -print0 | xargs -0 sed -i \
             -e 's/LucideIcons\.paintBrush/LucideIcons.brush/g'
 
+          echo "Patch 5: phone_control_page.dart 错误相对导入（settings/pages/ → phone_control/ui/）"
+          # settings_page.dart 中 import 'phone_control_page.dart' 解析为
+          # lib/features/settings/pages/phone_control_page.dart，但实际文件在
+          # lib/features/phone_control/ui/phone_control_page.dart。
+          find "$LIB/features/settings" -name 'settings_page.dart' -print0 | xargs -0 sed -i \
+            -e "s|^import 'phone_control_page\\.dart';|import '../../phone_control/ui/phone_control_page.dart';|"
+
           echo "All patches applied."
+
+      - name: Drift Code Generation
+        working-directory: motong_build
+        run: |
+          # Drift 数据库类（@DriftDatabase / @DriftAccessor）需要 build_runner 跑代码生成，
+          # 否则 types/methods（AppDatabase、AppSettingsDatabase、MemoryDao、customStatement 等）
+          # 都不可用，编译报 50+ 类型错误。
+          echo "Running build_runner for drift codegen..."
+          dart run build_runner build --delete-conflicting-outputs || \
+            echo "build_runner failed (continuing to surface remaining errors)"
 
       - name: Get dependencies
         working-directory: motong_build
