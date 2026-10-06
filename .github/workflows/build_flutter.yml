@@ -31,14 +31,13 @@ jobs:
       - name: Locate Source Project
         id: locate_src
         run: |
-          # 查找解压后的源码目录（含 pubspec.yaml）
           SRC_DIR=$(find . -name "pubspec.yaml" -not -path "*/build/*" | head -n 1 | xargs dirname)
           echo "SRC_DIR=$SRC_DIR" >> $GITHUB_OUTPUT
           echo "Source project at: $SRC_DIR"
 
       - name: Generate Build System with flutter create
         run: |
-          # 用 flutter create 生成完整的 Android Gradle 构建系统（项目 zip 缺少这些）
+          # flutter create 会生成 v2 embedding 的 MainActivity（com.motong.app.MainActivity）
           BUILD_DIR="motong_build"
           rm -rf "$BUILD_DIR"
           flutter create --org com.motong --project-name motong "$BUILD_DIR"
@@ -52,17 +51,20 @@ jobs:
           rm -rf "$BUILD_DIR/lib"
           cp -r "$SRC_DIR/lib" "$BUILD_DIR/"
 
-          # 合并 AndroidManifest.xml（保留权限/服务/接收器声明）
+          # 替换 AndroidManifest.xml，并修正 package 属性对齐 com.motong.app
+          # 这样 .MainActivity 能匹配 flutter create 生成的 com.motong.app.MainActivity
           mkdir -p "$BUILD_DIR/android/app/src/main"
           cp "$SRC_DIR/android/app/src/main/AndroidManifest.xml" \
              "$BUILD_DIR/android/app/src/main/"
+          sed -i 's/package="com\.motong"/package="com.motong.app"/' \
+             "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
+          sed -i 's/android:name="\.\(MoTongAccessibilityService\|MoTongDeviceAdminReceiver\)"/android:name="com.motong.app.phonecontrol.\1"/g' \
+             "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
 
-          # 合并 Kotlin 手机控制模块
-          if [ -d "$SRC_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol" ]; then
-            mkdir -p "$BUILD_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol"
-            cp -r "$SRC_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol/"* \
-               "$BUILD_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol/"
-          fi
+          # 合并 Kotlin 手机控制模块（plugin 必须正确注册，见下方 MainActivity 修改）
+          mkdir -p "$BUILD_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol"
+          cp -r "$SRC_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol/." \
+             "$BUILD_DIR/android/app/src/main/kotlin/com/motong/app/phonecontrol/"
 
           # 合并 XML 资源（无障碍服务 + 设备管理器）
           mkdir -p "$BUILD_DIR/android/app/src/main/res/xml"
@@ -77,19 +79,32 @@ jobs:
           # 合并 pubspec.yaml 依赖声明
           cp "$SRC_DIR/pubspec.yaml" "$BUILD_DIR/pubspec.yaml"
 
-          # 修正 namespace / applicationId 为 com.motong
+          # 修正 namespace / applicationId 为 com.motong.app
           APP_BUILD="$BUILD_DIR/android/app/build.gradle.kts"
-          if [ -f "$APP_BUILD" ]; then
-            sed -i 's/namespace = "com\.example\.motong"/namespace = "com.motong"/' "$APP_BUILD"
-            sed -i 's/applicationId = "com\.example\.motong"/applicationId = "com.motong"/' "$APP_BUILD"
-          fi
+          sed -i 's/namespace = "com\.example\.motong"/namespace = "com.motong.app"/' "$APP_BUILD"
+          sed -i 's/applicationId = "com\.example\.motong"/applicationId = "com.motong.app"/' "$APP_BUILD"
+
+          # 改写自动生成的 MainActivity，注册自定义 PhoneControlPlugin（v2 embedding）
+          cat > "$BUILD_DIR/android/app/src/main/kotlin/com/motong/app/MainActivity.kt" <<'EOF'
+          package com.motong.app
+
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import com.motong.app.phonecontrol.PhoneControlPlugin
+
+          class MainActivity : FlutterActivity() {
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  flutterEngine.plugins.add(PhoneControlPlugin())
+              }
+          }
+          EOF
 
           echo "Merged into $BUILD_DIR"
 
       - name: Fix Dependencies
         working-directory: motong_build
         run: |
-          # Flutter 3.35 要求 intl >= 0.20.0
           sed -i 's/intl: ^0\.19\.0/intl: ^0.20.2/' pubspec.yaml
 
       - name: Get dependencies
