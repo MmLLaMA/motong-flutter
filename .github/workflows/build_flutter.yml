@@ -51,11 +51,15 @@ jobs:
           rm -rf "$BUILD_DIR/lib"
           cp -r "$SRC_DIR/lib" "$BUILD_DIR/"
 
-          # 替换 AndroidManifest.xml，并修正 package 属性对齐 com.motong.app
+          # 合并 assets 目录（含 .gitkeep 占位，避免 pubspec 中声明的 assets/ 目录找不到）
+          cp -r "$SRC_DIR/assets" "$BUILD_DIR/"
+
+          # 替换 AndroidManifest.xml，并修正 namespace 对齐 com.motong.app
           mkdir -p "$BUILD_DIR/android/app/src/main"
           cp "$SRC_DIR/android/app/src/main/AndroidManifest.xml" \
              "$BUILD_DIR/android/app/src/main/"
-          sed -i 's/package="com\.motong"/package="com.motong.app"/' \
+          # 移除 package 属性（Android Gradle Plugin 8+ 不再支持，需在 build.gradle.kts 用 namespace）
+          sed -i 's/ package="com\.motong\.app"//g' \
              "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
           sed -i 's/android:name="\.\(MoTongAccessibilityService\|MoTongDeviceAdminReceiver\)"/android:name="com.motong.app.phonecontrol.\1"/g' \
              "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
