@@ -78,6 +78,9 @@ jobs:
           mkdir -p "$BUILD_DIR/android/app/src/main/res/xml"
           cp "$SRC_DIR/android/app/src/main/res/xml/"*.xml \
              "$BUILD_DIR/android/app/src/main/res/xml/" 2>/dev/null || true
+          # 修正：xml 引用了 accessibility_service_description，strings.xml 中实际命名为 a11y_service_description
+          sed -i 's/@string\/accessibility_service_description/@string\/a11y_service_description/g' \
+             "$BUILD_DIR/android/app/src/main/res/xml/accessibility_service_config.xml"
 
           # 合并 strings.xml
           mkdir -p "$BUILD_DIR/android/app/src/main/res/values"
